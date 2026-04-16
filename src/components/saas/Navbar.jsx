@@ -11,8 +11,11 @@ import {
   FaMagic,
   FaBars,
   FaTimes,
+  FaGithub,
 } from "react-icons/fa";
+import { SiVercel } from "react-icons/si";
 import { useState } from "react";
+
 import { motion, AnimatePresence } from "framer-motion";
 import { LoginButton } from "./AuthButtons";
 
@@ -123,6 +126,17 @@ export function Navbar() {
             />
           </div>
         )}
+
+        <a 
+          href="https://vercel.com/new/clone?repository-url=https://github.com/SamurAIGPT/seedance-2-generator"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white hover:bg-slate-800 transition-all font-bold text-[10px] tracking-widest uppercase shadow-lg shadow-slate-900/10"
+        >
+          <SiVercel className="text-xs" />
+          Deploy
+        </a>
+
 
         {/* Mobile menu toggle */}
         <button
