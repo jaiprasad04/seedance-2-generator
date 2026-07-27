@@ -5,9 +5,6 @@ import { prisma } from "@/lib/prisma";
 /**
  * Service to manage AI generations and interactions.
  */
-/**
- * Service to manage AI generations and interactions.
- */
 export const AIService = {
   /**
    * Calculate credit cost based on duration, quality, and resolution
@@ -37,11 +34,15 @@ export const AIService = {
   /**
    * Execute a generation quest using muapi.ai
    */
-  async generate(userId, { mode, prompt, aspect_ratio = "16:9", resolution = "720p", duration = 5, quality = "basic", images_list = [], video_files = [], audio_files = [] }) {
-    const cost = this.getCreditCost(mode, duration, quality, resolution);
-    await UserService.deductCredits(userId, cost);
+  async generate(userId, { mode, prompt, aspect_ratio = "16:9", resolution = "720p", duration = 5, quality = "basic", images_list = [], video_files = [], audio_files = [], customApiKey = null }) {
+    const isUsingCustomKey = Boolean(customApiKey && customApiKey.trim().length > 0);
+    const cost = isUsingCustomKey ? 0 : this.getCreditCost(mode, duration, quality, resolution);
 
-    const apiKey = config.ai.seedance.apiKey;
+    if (!isUsingCustomKey && cost > 0) {
+      await UserService.deductCredits(userId, cost);
+    }
+
+    const apiKey = isUsingCustomKey ? customApiKey.trim() : config.ai.seedance.apiKey;
     if (!apiKey) throw new Error("SEEDANCE_V2_API_KEY is not configured");
 
     // Map mode to endpoint type
@@ -73,57 +74,63 @@ export const AIService = {
       payload.audio_files = audio_files.slice(0, 3);
     }
 
-    const submitRes = await fetch(submitUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!submitRes.ok) {
-      const errorText = await submitRes.text();
-      throw new Error(`API Submission Failed: ${submitRes.status} ${errorText}`);
-    }
-
-    const { request_id } = await submitRes.json();
-    if (!request_id) throw new Error("No request_id received from API");
-
-    const creationModel = prisma.creation || prisma.Creation;
-    if (creationModel) {
-      await creationModel.create({
-        data: {
-          userId,
-          prompt,
-          aspectRatio: aspect_ratio,
-          resolution,
-          duration: parseInt(duration),
-          quality,
-          videoFiles: video_files,
-          audioFiles: audio_files,
-          inputImages: images_list && images_list.length > 0 ? JSON.stringify(images_list) : null,
-          requestId: request_id,
-          status: "processing",
-        }
+    try {
+      const submitRes = await fetch(submitUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify(payload),
       });
-    }
 
-    return { request_id };
+      if (!submitRes.ok) {
+        const errorText = await submitRes.text();
+        throw new Error(`API Submission Failed: ${submitRes.status} ${errorText}`);
+      }
+
+      const { request_id } = await submitRes.json();
+      if (!request_id) throw new Error("No request_id received from API");
+
+      const creationModel = prisma.creation || prisma.Creation;
+      if (creationModel) {
+        await creationModel.create({
+          data: {
+            userId,
+            prompt,
+            aspectRatio: aspect_ratio,
+            resolution,
+            duration: parseInt(duration),
+            quality,
+            videoFiles: video_files,
+            audioFiles: audio_files,
+            inputImages: images_list && images_list.length > 0 ? JSON.stringify(images_list) : null,
+            requestId: request_id,
+            status: "processing",
+          }
+        });
+      }
+
+      return { request_id };
+    } catch (err) {
+      if (!isUsingCustomKey && cost > 0) {
+        await UserService.addCredits(userId, cost);
+      }
+      throw err;
+    }
   },
 
   /**
    * Wrapper for edit/reference to video if needed, currently mapping to generate
    */
-  async edit(userId, params) {
-    // For now, mapping reference-to-video to generate as it likely uses the i2v/t2v endpoints similarly
-    return this.generate(userId, params);
+  async edit(userId, params, customApiKey = null) {
+    return this.generate(userId, { ...params, customApiKey });
   },
 
   /**
    * Check status of a request and save to DB on completion
    */
-  async checkStatus(requestId, userId, metadata) {
+  async checkStatus(requestId, userId, metadata, customApiKey = null) {
     const creationModel = prisma.creation || prisma.Creation;
     if (!creationModel) return { status: "processing" };
 
@@ -143,8 +150,8 @@ export const AIService = {
       throw new Error(creation.error || "Generation failed.");
     }
 
-    // Upstream fallback poll
-    const apiKey = config.ai.seedance.apiKey;
+    const isUsingCustomKey = Boolean(customApiKey && customApiKey.trim().length > 0);
+    const apiKey = isUsingCustomKey ? customApiKey.trim() : config.ai.seedance.apiKey;
     if (!apiKey) return { status: "processing" };
 
     try {
@@ -183,9 +190,11 @@ export const AIService = {
             }
           });
 
-          // Refund credits
-          const cost = this.getCreditCost(creation.mode, creation.duration || 5, creation.quality || "basic", creation.resolution || "720p");
-          await UserService.addCredits(userId, cost);
+          // Refund credits if not using custom key
+          if (!isUsingCustomKey) {
+            const cost = this.getCreditCost(creation.mode, creation.duration || 5, creation.quality || "basic", creation.resolution || "720p");
+            await UserService.addCredits(userId, cost);
+          }
           throw new Error(errorMsg);
         }
       }
